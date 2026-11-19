@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1769e0">
+<meta name="description" content="Buscador de materiales">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<title>Materiales</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#17202a;background:#eef2f6}
+*{box-sizing:border-box}body{margin:0}header{background:#1769e0;color:#fff;padding:20px 18px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px}header h1{margin:0;font-size:25px}header p{margin:5px 0 0;opacity:.9}.headtxt{min-width:0}
+.updbtn{background:#fff;color:#1769e0;border:0;border-radius:11px;padding:11px 13px;font-weight:700;font-size:14px;white-space:nowrap}.updbtn:active{transform:scale(.98)}
+main{max-width:900px;margin:auto;padding:18px}.card{background:#fff;border-radius:16px;padding:16px;box-shadow:0 3px 15px #00000012}.search{display:flex;gap:9px}input[type=text]{flex:1;min-width:0;border:1px solid #cbd5e1;border-radius:11px;padding:14px;font-size:17px;outline:0}input[type=text]:focus{border-color:#1769e0;box-shadow:0 0 0 3px #1769e01f}button{border:0;border-radius:11px;background:#1769e0;color:#fff;padding:0 18px;font-size:16px}.info{font-size:13px;color:#667085;margin:13px 2px}.filters{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.filters select{width:100%;border:1px solid #cbd5e1;border-radius:11px;padding:12px;font-size:15px;background:#fff;color:#17202a}.results{display:grid;gap:10px}.item{border:1px solid #e3e7eb;border-radius:13px;padding:14px;background:#fff}.code{font-weight:800;color:#1769e0;font-size:16px}.desc{font-size:16px;margin:4px 0 10px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.cell{background:#f7f9fb;border-radius:9px;padding:8px}.label{font-size:11px;color:#667085}.value{font-weight:600;font-size:13px;margin-top:2px}mark{background:#fff09a;border-radius:3px}.empty{text-align:center;color:#667085;padding:30px 10px}
+.help{font-size:12px;color:#667085;margin-top:10px;line-height:1.4}.status{display:none;margin-top:12px;padding:11px;border-radius:10px;font-size:13px;background:#eef7ee;color:#245b2a}.status.error{background:#fff0f0;color:#8a1c1c}
+@media(max-width:560px){header{align-items:flex-start}.search{flex-direction:column}.search button{height:46px}.grid{grid-template-columns:repeat(2,1fr)}.filters{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+ <div class="headtxt"><h1>🔎 Materiales</h1><p>Buscador de stock</p></div>
+ <button class="updbtn" id="updateBtn">↻ Actualizar</button>
+ <input id="fileInput" type="file" accept=".xlsx,.xls,.csv,.txt,.tsv" hidden>
+</header>
+<main>
+<div class="card">
+ <div class="search"><input id="q" type="text" autocomplete="off" autofocus placeholder="Buscar por código o descripción..."><button id="btn">Buscar</button></div>
+ <div class="filters"><select id="centerFilter"><option value="">Todos los centros</option></select><select id="warehouseFilter"><option value="">Todos los almacenes</option></select></div>
+ <div id="info" class="info"></div>
+ <div id="results" class="results"></div>
+ <div class="help">Para actualizar: tocá “Actualizar” y seleccioná directamente tu archivo <b>.XLSX</b> (también acepta CSV). Se toma la primera hoja y la nueva base queda guardada en este teléfono. Podés filtrar por <b>Centro</b> y <b>Almacén</b>.</div>
+ <div id="status" class="status"></div>
+</div>
+</main>
+<script src="data.js"></script>
+<script>
+const q=document.getElementById('q'),results=document.getElementById('results'),info=document.getElementById('info'),fileInput=document.getElementById('fileInput'),statusBox=document.getElementById('status'),centerFilter=document.getElementById('centerFilter'),warehouseFilter=document.getElementById('warehouseFilter');
+const norm=s=>String(s??'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function score(x,query){const code=norm(x.material),desc=norm(x.descripcion),hay=code+' '+desc;if(code===query)return 1000;if(desc===query)return 900;if(code.startsWith(query))return 800;if(desc.startsWith(query))return 700;if(code.includes(query))return 600;if(desc.includes(query))return 500;const terms=query.split(/\s+/).filter(Boolean);const hits=terms.filter(t=>hay.includes(t)).length;return hits===terms.length?300+hits:0;}
+function mark(s,query){let out=esc(s);for(const t of query.split(/\s+/).filter(Boolean).sort((a,b)=>b.length-a.length)){const re=new RegExp('('+t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi');out=out.replace(re,'<mark>$1</mark>');}return out;}
+function getMaterials(){try{const saved=localStorage.getItem('materiales_data');if(saved){const parsed=JSON.parse(saved);if(Array.isArray(parsed)&&parsed.length)return parsed;}}catch(e){}return MATERIALS;}
+let materials=getMaterials();
+function fillFilters(){
+ const selectedCenter=centerFilter.value;
+ const selectedWarehouse=warehouseFilter.value;
+ const centers=[...new Set(materials.map(x=>String(x.centro||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+ centerFilter.innerHTML='<option value="">Todos los centros</option>'+centers.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+ if(centers.includes(selectedCenter)) centerFilter.value=selectedCenter;
+ const center= centerFilter.value;
+ const warehouses=[...new Set(materials.filter(x=>!center||String(x.centro||'')===center).map(x=>String(x.almacen||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es',{numeric:true}));
+ warehouseFilter.innerHTML='<option value="">Todos los almacenes</option>'+warehouses.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+ if(warehouses.includes(selectedWarehouse)) warehouseFilter.value=selectedWarehouse;
+}
+function search(){
+ const query=norm(q.value.trim()), center=centerFilter.value, warehouse=warehouseFilter.value;
+ const filtered=materials.filter(x=>(!center||String(x.centro||'')===center)&&(!warehouse||String(x.almacen||'')===warehouse));
+ if(!query){info.textContent=`${filtered.length} material(es)${(center||warehouse)?' con los filtros seleccionados':''}`;results.innerHTML='<div class="empty">Escribí un código o una descripción.</div>';return;}
+ const found=filtered.map(x=>({x,s:score(x,query)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s);
+ info.textContent=`${found.length} resultado(s) de ${filtered.length} material(es)`;
+ results.innerHTML=found.length?found.map(({x})=>`<div class="item"><div class="code">${mark(x.material,query)}</div><div class="desc">${mark(x.descripcion,query)}</div><div class="grid"><div class="cell"><div class="label">Stock</div><div class="value">${esc(x.stock)}</div></div><div class="cell"><div class="label">Unidad</div><div class="value">${esc(x.unidad)}</div></div><div class="cell"><div class="label">Lote</div><div class="value">${esc(x.lote)}</div></div><div class="cell"><div class="label">Centro</div><div class="value">${esc(x.centro)}</div></div><div class="cell"><div class="label">Almacén</div><div class="value">${esc(x.almacen)}</div></div></div></div>`).join(''):'<div class="empty">No se encontraron materiales con esos criterios.</div>';
+}
+function showStatus(msg,error=false){statusBox.textContent=msg;statusBox.className='status'+(error?' error':'');statusBox.style.display='block';setTimeout(()=>statusBox.style.display='none',5000);}
+function parseDelimited(text){text=text.replace(/^\uFEFF/,'').trim();if(!text)return [];const first=text.split(/\r?\n/)[0];const delimiter=first.includes('\t')?'\t':first.includes(';')?';':',';const rows=[];let row=[],cell='',quote=false;for(let i=0;i<text.length;i++){const c=text[i],n=text[i+1];if(c==='"'){if(quote&&n==='"'){cell+='"';i++;}else quote=!quote;}else if(c===delimiter&&!quote){row.push(cell);cell='';}else if((c==='\n'||c==='\r')&&!quote){if(c==='\r'&&n==='\n')i++;row.push(cell);rows.push(row);row=[];cell='';}else cell+=c;}if(cell!==''||row.length){row.push(cell);rows.push(row);}if(rows.length<2)return [];return rowsToMaterials(rows);}
+function rowsToMaterials(rows){const headers=rows[0].map(h=>norm(h).trim());const find=names=>{for(const n of names){const i=headers.indexOf(norm(n));if(i>=0)return i;}return -1};const idx={material:find(['Material','Código','Codigo']),descripcion:find(['Texto breve de material','Descripción','Descripcion','Material']),stock:find(['Libre utilización','Libre utilizacion','Stock']),unidad:find(['Unidad medida base','Unidad','UM']),lote:find(['Lote']),centro:find(['Centro']),almacen:find(['Almacén','Almacen'])};if(idx.material<0||idx.descripcion<0)throw new Error('No encuentro las columnas Material y Texto breve de material.');return rows.slice(1).filter(r=>r.some(v=>String(v).trim())).map(r=>({material:String(r[idx.material]??'').trim(),descripcion:String(r[idx.descripcion]??'').trim(),stock:String(r[idx.stock]??'').trim(),unidad:String(r[idx.unidad]??'').trim(),lote:String(r[idx.lote]??'').trim(),centro:String(r[idx.centro]??'').trim(),almacen:String(r[idx.almacen]??'').trim()})).filter(x=>x.material||x.descripcion);}
+function parseXlsx(buffer){if(!window.XLSX)throw new Error('No se pudo cargar el lector de Excel. Conectate a Internet e intentá nuevamente.');const wb=XLSX.read(buffer,{type:'array',cellDates:false});const ws=wb.Sheets[wb.SheetNames[0]];if(!ws)throw new Error('El Excel no tiene una hoja de datos.');return rowsToMaterials(XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false}));}
+document.getElementById('updateBtn').addEventListener('click',()=>fileInput.click());
+fileInput.addEventListener('change',async()=>{const file=fileInput.files[0];if(!file)return;try{let parsed;if(/\.(xlsx|xls)$/i.test(file.name)){parsed=parseXlsx(await file.arrayBuffer());}else{parsed=parseDelimited(await file.text());}if(!parsed.length)throw new Error('El archivo no contiene materiales.');materials=parsed;localStorage.setItem('materiales_data',JSON.stringify(materials));fillFilters();search();showStatus(`Actualización completa: ${materials.length} materiales cargados.`);}catch(e){showStatus('No se pudo actualizar: '+e.message,true);}fileInput.value='';});
+q.addEventListener('input',search);q.addEventListener('keydown',e=>{if(e.key==='Enter')search()});document.getElementById('btn').addEventListener('click',search);centerFilter.addEventListener('change',()=>{fillFilters();search();});warehouseFilter.addEventListener('change',search);
+fillFilters();search();if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+</script>
+</body></html>
